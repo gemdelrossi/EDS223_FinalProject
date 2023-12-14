@@ -8,7 +8,8 @@ EDS223-final_project
 │   README.md
 │   Rmd/Proj files   
 └───data
-    │   clean_data
+    └───clean_data
+    |   |   aggregated_data
     │   raw_data
     │   sample_clean_data  
     └───zambia_geoboundaries
