@@ -3,7 +3,7 @@
 This is the README file for the EDS 223 Final Project.   
   
 The data structure for your folders should go as follows:  
-  
+ ``` 
 EDS223-final_project
 │   README.md
 │   Rmd/Proj files   
@@ -14,7 +14,7 @@ EDS223-final_project
     └───zambia_geoboundaries
     |   │   adm1
     |   │   adm2
-
+```
 The code chunk provided within the RMD file should create this structure for you, but check to make sure all your directories are set up properly.  
   
 The raw_data and sample_clean_data folders should be empty, and the clean_data folder will contain the .nc precipitation files for the years 2015-2020 you will need.   
