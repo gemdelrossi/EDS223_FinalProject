@@ -1,0 +1,1844 @@
+---
+title: "Understanding Estimated Rainfall in Zambia"
+author: "Gemma Del Rossi"
+date: "December 15th, 2023"
+output: 
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Introduction
+
+!["Lusitu River during the dry season in Zambia. Picture credit: Colleen Henegan"](https://pulitzercenter.org/sites/default/files/styles/orig_optimized/public/inline-images/ColleenHeneganDryLusituRiver.JPG.webp?itok=fPJ8HMAP)
+\br
+
+Understanding spatial and temporal patterns of precipitation is increasingly important as our global climate changes, because of precipitation's wide ranging impacts on food security, natural disasters such as drought and floods, and on human health and well being (e.g. wet bulb humidity, vector borne diseases, etc).  The specific goal of my current research project is to understand how start of season (SOS) rainfall  impacts smallholder farmer timing decisions of when to plant Maize (the primary staple crop) and the corresponding yields in Zambia. Smallholder agriculturalists often have limited climate-change adaptation strategies as they have limited capital and labor access (Waongo et al., 2015), so low-technology adaptation strategies such as timing planting decisions and changing seed variety will be important as precipitation becomes less predictable under climate change. 
+
+The precipitation data my co-author and I are using for this research is called [CHIRPS (Climate Hazards Group InfraRed Precipitation with Station)](https://www.chc.ucsb.edu/data/chirps), which is a gridded quasi-global $0.5^{\circ} \times 0.5^{\circ}$ resolution rainfall data set created in collaboration with UCSB's Climate Hazards Center and the USGS. Where the CHIRPS data set departs from other sources of precipitation data is that it combines remotely sensed precipitation data, in-situ station data, and predictors of rainfall such as elevation, latitude, and longitude to estimate precipitation. The authors' claim that relying solely upon satellite data creates biased estimates because RS data doesn't account for precipitation patterns on complex terrain, and solely relying upon in-situ data biases estimates because it under-measures precipitation in regions where gauges are scare (e.g. Sub-Saharan Africa (SSA)). Therefore, CHIRPS creates a data product of gridded rainfall maps in regions where surface data is scarce for improved measurement of precipitation, which is very important in drought-prone regions such as SSA.    
+
+### What is CHIRPS? How is the rainfall estimated? 
+
+Since we are not relying upon one estimated precipitation measure, it's important to understand how the authors of this data created and estimate mean precipitation. The authors use the following to estimate the rainfall: CHPclim ("in-house" climatology), remotely sensed sattelite imagery, and in-situ station data. The data sources are as follows:
+
+1.  CHPclim: The CHC climatology data comes from many different sources and are in an archive of in situ daily, pentadal, and monthly precipitation estimates. The authors typically use monthly estimates and disaggregate the estimates to pentadal estimated rainfall at each grid cell location to capture the "expected annual sequence of rainfall at each location". 
+
+2.  RS Imagery: The authors use geostational thermal infrared sattelite observations from the following sources 
+- NOAA Climate Prediction Center IR
+- NOAA National Climatic Data Data Center B1 IR 
+- NASA Tropical Rainfall measuring Mission (TRMM) 3B42 
+
+3. Atmospheric Models: NOAA Climate Forecast System atmospheric model rainfall fields
+
+5. In-situ precipitation observations obtained from national and regional metergological sources (not sure how this is different from the in-house climatology)
+
+The rainfall is estimated by doing the following: The authors create an Infrared Precipitation (IRP) estimate by "calculating the percentage of time during
+the pentad that the IR observations indicate cold cloud tops (<235° K), and converting that value into millimeters of precipitation by means of previously determined local regression with TRMM 3B42 precipitation pentads" (Funk et al., 2014). These estimates are then divided by the long-term IRP means to express a unitless value of rainfall over time. The authors then multiply by the CHPclim pentad data to "produce an unbiased gridded estimate, with units of millimeters per pentad" of rainfall. Essentially, they aim to combine temporal precipitation data (the RS IRP) with spatial precipitation data obtained from CHPclim. 
+
+Further, the authors account for station distance variability in the in-situ data by doing "station blending" of rainfall estimates, where for each grid location, the rainfall estimate is calculated from 5 nearest stations' observations to create an adjustment ratio, where closer stations receive higher weights to capture rainfall estimation. 
+
+Additionally, the CHIRPS data product is offered at daily, pentadal, and monthly precipitation estimates, with each product being estimated slightly differently. For example, even though the CHIRPS station blending is carried out at the pentad and monthly time scale, the pentadal CHIRPS values are "adjusted such that thier sums equals the total monthly CHIRPS." Further, daily precipitation in Africa is measured through the IRP information, where "Using daily cold cloud duration percentages (%CCD), daily rain/no-rain events are determined. The corresponding pentadal rainfall is partitioned among the daily rain events proportional to their %CCD" (Funk et al., 2014).
+
+Knowing and understanding how the CHIRPS precipitation is estimated is important for my research since we are examining timing decisions of rainfall at a relatively fine spatial scale. So for example, if my co-author and I decide to use the daily estimated precipitation data, how confident are we of it's accuracy in relation to the estimated pentadal and monthly data sources?\
+
+It is with this in mind that I turn to my data analysis of the CHIRPS data. The goals of my anaysis are the following: 
+
+- Create generalized functions for daily, pentadal, and monthly data that allow for scraping the CHIRPS data from online, and crops the datasets to the spatial extent of Zambia for the years 1990-2019 (30 years).
+
+- Aggregating the daily and pentadal data to pentadal and monthly (respecitvely) to understand the accuracy of the estimates as we move to a coarser time scale.
+
+- Extracting precipitation estimates of the CHIRPS data for Zambia at the province and district level for the years 2016-2020 (the years within our study).
+
+  - Some necessary data wrangling  
+
+- Creating the Start of Season (SOS) variable at the district and province level, and creating a Seasonal Precipitation Index variable at the province level.
+
+- Create visualizations that demonstrate the differences that arise from aggregation, as well as the SOS and SPI variables. 
+
+
+```{r wd, results='hide', message=FALSE, warning=FALSE, include=FALSE}
+
+# get relevant directories and folders 
+
+rm(list = ls())
+getwd()
+
+dir <- list()
+dir$root <- paste0(getwd())
+dir$data <- paste0(dir$root,"/data")
+dir$raw_data <- paste0(dir$data,"/raw_data")
+dir$cleaned_data <- paste0(dir$data, "/clean_data")
+dir$sample_cleaned_data <- paste0(dir$data, "/sample_clean_data")
+dir$agg_data <- paste0(dir$cleaned_data,"/aggregated_data")
+#dir$figures <- paste0(dir$root,"/figures")
+lapply(dir, function(x) dir.create(x, showWarnings = F))
+
+# check if directories are correct:
+dir
+
+# download packages 
+
+options("sp_evolution_status"=2)
+install.packages("terra", repos="https://rspatial.r-universe.dev") # yes to restart
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyverse, tidylog, ggpubr, ncdf4, exactextractr, lubridate, geosphere, sf, 
+  mapview, maps, mapproj, ggplot2, ggspatial, hrbrthemes,scales, RColorBrewer) 
+
+library(sf)
+library(terra)
+
+```
+
+```{r boundaries, results='hide', include=FALSE}
+
+# get relevant geoboundaries for zambia
+
+zambia <- map("world", plot = FALSE, regions = "Zambia", fill = TRUE)
+zambia <- st_as_sf(zambia) 
+zambia_buffer <- st_buffer(zambia, dist = 100000) # add a 100km buffer around zambia
+
+zambia <- vect(zambia) # convert to an sf object then to SpatVect object
+zambia_buffer <- vect(zambia_buffer)
+
+# download Zambia shape files and plot 
+
+#st_layers(paste0(dir$data,"/zambia_geoboundaries/adm1"))
+zambia_adm1 <- st_read(paste0(dir$data,"/zambia_geoboundaries/adm1"), 
+                       layer = "geoBoundaries-ZMB-ADM1_simplified")
+
+#st_layers(paste0(dir$data,"/zambia_geoboundaries/adm2"))
+zambia_adm2 <- st_read(paste0(dir$data,"/zambia_geoboundaries/adm2"), 
+                      layer = "geoBoundaries-ZMB-ADM2_simplified")
+
+```
+
+# Downloading CHIRPS data
+
+At the moment, the only way to access and download multiple years of CHIRPS data is through scraping it off the web. I create a function for each daily data, pentadal data, and monthly data that accomplishes the following. First, I download the file into my `raw_data` folder, then I load it into my R work space, match the the coordinate reference systems with the spatial polygon outline of Zambia (plus 100km buffer), crop the raster to the spatial extent of `zambia_buffer`, and write to disk as a new file with reduced size in a folder called `sample_clean_data`. 
+
+As each raw file is very large (daily data > 1 GB, monthly data > 5 GB), I wrote the code such that the reader only needs to download 1 year of data (e.g. 1990) to demonstrate it works.
+
+## Daily Precipitation
+
+```{r daily precip, include= TRUE}
+
+options(timeout=10000)
+
+precip_extract_daily <- function(year){
+  
+  if(!file.exists(file.path(paste0(dir$raw_data,
+                                   "/chirps-v2.0.",year,"_daily.nc")))) {
+    
+    download.file(url =
+                    paste0("http://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/netcdf/p05/chirps-v2.0.",year,".days_p05.nc"),
+                  destfile = paste0(dir$raw_data,"/chirps-v2.0.",year,"_daily.nc"), 
+                  mode = "wb")
+  } else {
+    cat("Skipped:", paste0(dir$raw_data,"/chirps-v2.0.",year,"_daily.nc"), 
+        "(File already exists)\n")
+  }
+  
+  filename <- paste0(dir$raw_data,"/chirps-v2.0.",year,"_daily.nc")
+  
+  daily_precip <- terra::rast(filename)
+  
+  if (crs(zambia_buffer) == crs(daily_precip)){ # make sure the CRSs match
+    
+    print("The CRSs match")
+    
+  } else {
+    
+    print("You need to change 1 CRS to match the other")
+    
+    zambia_buffer <- project(zambia_buffer, crs(daily_precip)) # re-project 
+    zambia <- project(zambia, crs(daily_precip))
+    
+    if(crs(zambia_buffer) == crs(daily_precip)) { # check again
+      
+      print("The CRSs now match")
+
+    } else {
+      
+      print("There was an error transforming the CRSs to match")
+    }
+  }
+  
+  #write cropped files
+  if(!file.exists(file.path(paste0(dir$sample_cleaned_data,
+                                   "/chirps-v2.0.",year,"_daily.nc")))) {
+    
+      daily_precip_reduced <- terra::crop(daily_precip, zambia_buffer) # crop extent 
+      
+      terra::writeCDF(daily_precip_reduced, 
+                    filename =  
+                      paste0(dir$sample_cleaned_data,
+                             "/chirps-v2.0.",year,"_daily.nc"), 
+                    varname = "mm/day", 
+                    unit = "mm",
+                    overwrite = FALSE)
+  } else {
+      cat("Skipped:",paste0(dir$sample_cleaned_data,"/chirps-v2.0.",year,"_daily.nc"), 
+        "(File already exists)\n")
+  }
+}
+
+years <- c(1990:2020)
+
+# Run function for just one year
+
+for (year in years[1]) {
+  precip_extract_daily(year)
+}
+
+# show it works 
+
+sample1 <- rast(paste0(dir$sample_cleaned_data,"/chirps-v2.0.1990_daily.nc"))
+
+zambia_buffer <- project(zambia_buffer, crs(sample1)) # re-project 
+zambia <- project(zambia, crs(sample1))
+
+plot(sample1[[1]], main = "Estimated Daily Precipitation Sample(01-01-2015)")
+lines(zambia)
+lines(zambia_buffer, lty =2)
+
+```
+
+## Pentadal Precipitation
+
+```{r pent precip, include = TRUE}
+
+precip_extract_pentad <- function(year){
+  
+  if(!file.exists(file.path(paste0(dir$raw_data,"/chirps-v2.0.",year,"_pentads.nc")))){
+    
+    download.file(url =
+                    paste0("http://data.chc.ucsb.edu/products/CHIRPS-2.0/global_pentad/netcdf/chirps-v2.0.",year,".pentads.nc"),
+                  destfile =
+                    paste0(dir$raw_data,"/chirps-v2.0.",year,"_pentads.nc"), 
+                  mode = "wb")
+  } else {
+    cat("Skipped:", paste0(dir$raw_data,"/chirps-v2.0.",year,"_pentads.nc"), 
+        "(File already exists)\n")
+  }
+  
+  filename <- paste0(dir$raw_data,"/chirps-v2.0.",year,"_pentads.nc")
+  
+  pentad_precip <- terra::rast(filename)
+  
+  if (crs(zambia_buffer) == crs(pentad_precip)){ # make sure the CRSs match
+    
+    print("The CRSs match")
+  
+  } else {
+    
+    print("You need to change 1 CRS to match the other")
+    
+    zambia_buffer <- project(zambia_buffer, crs(pentad_precip)) # Reproject
+    zambia <- project(zambia, crs(daily_precip))
+    
+    if(crs(zambia_buffer) == crs(pentad_precip)) { # check again
+      
+      print("The CRSs now match")
+
+    } else {
+      
+      print("There was an error transforming the CRSs to match")
+    }
+  }
+  
+  #write cropped files
+  if(!file.exists(file.path(paste0(dir$sample_cleaned_data,
+                                   "/chirps-v2.0.",year,"_pentads.nc")))) {
+    
+    pentad_precip_reduced <- terra::crop(pentad_precip, zambia_buffer) # crop extent 
+    
+    terra::writeCDF(pentad_precip_reduced, 
+                    filename =
+                      paste0(dir$sample_cleaned_data,
+                             "/chirps-v2.0.",year,"_pentads.nc"), 
+                    varname = "mm/pentad", 
+                    unit = "mm",
+                    overwrite = FALSE)
+  } else {
+    cat("Skipped:",paste0(dir$sample_cleaned_data,
+                          "/chirps-v2.0.",year,"_pentads.nc"), 
+        "(File already exists)\n")
+  }
+}
+
+# Run function for just one year
+
+for (year in years[1]) {
+  precip_extract_pentad(year)
+}
+
+sample2 <- rast(paste0(dir$sample_cleaned_data,"/chirps-v2.0.1990_pentads.nc"))
+plot(sample2[[1]], main = "Estimated Pentadal Precipitation Sample (01-01-2015)")
+lines(zambia)
+lines(zambia_buffer, lty =2)
+
+```
+
+## Monthly Precipitation 
+
+```{r mo precip, include=TRUE}
+
+# comes in just one file, with each month as a layer
+
+if(!file.exists(file.path(paste0(dir$raw_data,"/chirps-v2.0.monthly.nc")))){
+  
+  download.file(url = paste0("http://data.chc.ucsb.edu/products/CHIRPS-2.0/global_monthly/netcdf/chirps-v2.0.monthly.nc"),
+                destfile = paste0(dir$raw_data,"/chirps-v2.0.monthly.nc"), 
+                mode = "wb")
+} else {
+  cat("Skipped:", paste0(dir$raw_data,"/chirps-v2.0.monthly.nc"), 
+      "(File already exists)\n")
+}
+
+filename <- paste0(dir$raw_data,"/chirps-v2.0.monthly.nc")
+monthly_precip <- terra::rast(filename)
+
+if (crs(zambia_buffer) == crs(monthly_precip)){ # make sure the CRSs match
+  
+  print("The CRSs match")
+  
+} else {
+  
+  print("You need to change 1 CRS to match the other")
+  
+  zambia_buffer <- project(zambia_buffer, crs(monthly_precip))
+  zambia <- project(zambia, crs(daily_precip))
+  
+   if(crs(zambia_buffer) == crs(monthly_precip)) { # check again
+    
+     print("The CRSs now match")
+    
+    } else {
+    
+      print("There was an error transforming the CRSs to match")
+  }
+}
+
+# crop to relevant layers and write to file
+
+if(!file.exists(file.path(paste0(dir$sample_cleaned_data,"/chirps-v2.0.monthly.nc")))) {
+  
+  month_precip_reduced <- terra::crop(monthly_precip, zambia_buffer) # crop extent 
+  
+  month_precip_reduced <- terra::subset(month_precip_reduced, 109:480) #select 1990-2020 lyrs
+  
+  terra::writeCDF(month_precip_reduced, 
+                  filename =
+                    paste0(dir$sample_cleaned_data,"/chirps-v2.0.monthly.nc"), 
+                  varname = "mm/month", 
+                  unit = "mm",
+                  overwrite = FALSE)
+} else {
+  cat("Skipped:",paste0(dir$sample_cleaned_data,"/chirps-v2.0.monthly.nc"), 
+      "(File already exists)\n")
+}
+
+# show it works 
+
+sample3 <- rast(paste0(dir$sample_cleaned_data,"/chirps-v2.0.monthly.nc"))
+plot(sample3[[1]], main = "Estimated Monthly Precipitation Sample (01-2015)")
+lines(zambia)
+lines(zambia_buffer, lty =2)
+
+# clean up workspace
+rm(monthly_precip, sample1, sample2, sample3, year, filename)
+
+```
+
+# Aggregating the data 
+
+The goal in aggregating the data is to show how the precipitation estimates compare to the raw precipitation estimates. For this, I aggregate the daily estimated precipitation observations to pentadal observations; and then also take the daily-pentadal observations and aggregate those to monthly observations. Similarly, I take the pentadal estimated precipitation, and aggregate that to monthly. Given what the authors' description of the pentadal and daily data estimation, we should expect that the daily is a rough approximation of the pentadal, and the pentadal is a precise approximation for the monthly.
+
+To aggregate, I create a sequence to follow where for each year of data, I subset the data by the index of the sequence, then sum the precipitation estimates of each subset, and create a new raster based on the summed precipitation that matches the temporal dimension of each data type. 
+
+Although this function is generalize to all 30 years to clean the data, I wrote this code such that the reader only need to run the 1 year of data (1990) found within the `sample_clean_data` created from the previous steps. 
+
+## Daily aggregated to pentadal
+
+```{r d agg p, include = TRUE}
+
+# create daily-pentad sequence 
+
+daily_pentad_seq <- seq(5,365, by = 5)
+
+# write function 
+
+dailytopentad_func <- function(year) {
+  
+  if(!file.exists(file.path(paste0(dir$sample_cleaned_data,"/daily_aggpent_",year,".nc")))){
+  
+    chirps_year_daily <- rast(paste0(dir$sample_cleaned_data,
+                                            "/chirps-v2.0.",year,"_daily.nc"))
+    
+    d_agg_pent_year <- rast(nrows = nrow(chirps_year_daily), 
+                                   ncols = ncol(chirps_year_daily), 
+                                   nlyr = (length(daily_pentad_seq)-1), 
+                                   extent = ext(chirps_year_daily))
+    
+    for (i in 1:(length(daily_pentad_seq)-1)) {
+      
+      pentad_precip <- subset(chirps_year_daily, 
+                              (sum(daily_pentad_seq[i-1],1)):daily_pentad_seq[i])
+      
+      d_agg_pent_year[[i]] <- app(pentad_precip, fun = sum)
+      
+      names(d_agg_pent_year) <- paste0("pentad",1:72,"_",year)
+    }
+    
+    # write to file 
+    
+    terra::writeCDF(d_agg_pent_year, filename = 
+                    paste0(dir$sample_cleaned_data,"/daily_aggpent_",year,".nc"),
+                    varname = "mm/pentad", 
+                    unit = "mm",
+                    overwrite = FALSE)
+    
+    } else {
+    
+      cat("Skipped:", paste0(dir$sample_cleaned_data,"/pentad_aggmonth_",year,".nc"),
+          "(File already exists)\n")
+  }
+}
+
+# Run function for just one year
+
+lapply(years[1], function(x){
+  dailytopentad_func(x)
+})
+
+# show it works
+
+sample1 <- rast(paste0(dir$sample_cleaned_data,"/daily_aggpent_1990.nc"))
+plot(sample1[[1]], 
+     main = "Estimated Daily-Pentad Precipitation Sample (01-01-2015)")
+lines(zambia)
+lines(zambia_buffer, lty =2)
+
+```
+
+## Pentad aggregated to monthly 
+
+```{r p agg m, include = TRUE}
+
+pentad_mo_seq <- seq(6,72, by = 6)
+
+months <- c("January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December")
+
+# function 
+
+penttomonth_func <- function(year) {
+  
+  if(!file.exists(file.path(paste0(dir$sample_cleaned_data,"/pentad_aggmonth_",year,".nc")))){ 
+    
+    chirps_year_pentad <- terra::rast(paste0(dir$cleaned_data,
+                                             "/chirps-v2.0.",year,"_pentads.nc"))
+    
+    p_agg_month_year <- terra::rast(nrows = nrow(chirps_year_pentad), 
+                                    ncols = ncol(chirps_year_pentad), 
+                                    nlyr = length(pentad_mo_seq), 
+                                    extent = ext(chirps_year_pentad))
+    
+    for (i in 1:length(pentad_mo_seq)) {
+      
+      monthly_precip <- subset(chirps_year_pentad, 
+                               sum(pentad_mo_seq[i-1],1):pentad_mo_seq[i])
+      
+      p_agg_month_year[[i]] <- app(monthly_precip, fun = sum)
+      
+      names(p_agg_month_year) <- paste0(months,"_",year)
+    }
+    
+    # write to file 
+    
+    terra::writeCDF(p_agg_month_year,filename =
+                      paste0(dir$sample_cleaned_data,"/pentad_aggmonth_",year,".nc"),
+                    varname = "mm/month", 
+                    unit = "mm",
+                    overwrite = FALSE)
+    
+  } else {
+    
+    cat("Skipped:", paste0(dir$sample_cleaned_data,"/pentad_aggmonth_",year,".nc"), 
+        "(File already exists)\n")
+ }
+}
+
+# run function 
+
+lapply(years[1], function(x){
+  print(x)
+  penttomonth_func(x)
+})
+
+# show it works
+
+sample2 <- rast(paste0(dir$sample_cleaned_data,"/pentad_aggmonth_1990.nc"))
+plot(sample2[[1]], 
+     main = "Estimated Pentad-Monthly Precipitation Sample (01-2015)")
+lines(zambia)
+lines(zambia_buffer, lty =2)
+
+```
+
+## Daily-Pentad Aggregated to Monthly
+
+```{r dp agg m, include=TRUE}
+
+# I use the same function as the pentad --> month aggregation
+# I had a daily --> monthly aggregation function but it was buggy because I was trying to aggregate over uneven days in each month (not to mention leap years...)
+# this worked well 
+
+aggpenttomonth_func <- function(year) {
+  
+  if(!file.exists(file.path(paste0(dir$sample_cleaned_data,
+                                   "/daily_aggmonth_",year,".nc")))){ 
+    
+    chirps_year_pentad <- rast(paste0(dir$sample_cleaned_data,
+                                      "/daily_aggpent_",year,".nc"))
+    
+    p_agg_month_year <- rast(nrows = nrow(chirps_year_pentad), 
+                                    ncols = ncol(chirps_year_pentad), 
+                                    nlyr = length(pentad_mo_seq), 
+                                    extent = ext(chirps_year_pentad))
+    
+    for (i in 1:length(pentad_mo_seq)) {
+      
+      monthly_precip <- subset(chirps_year_pentad, 
+                               sum(pentad_mo_seq[i-1],1):pentad_mo_seq[i])
+      
+      p_agg_month_year[[i]] <- app(monthly_precip, fun = sum)
+      
+      names(p_agg_month_year) <- paste0(months,"_",year)
+    }
+    
+    # write to file 
+    
+    terra::writeCDF(p_agg_month_year, 
+                    filename = paste0(dir$sample_cleaned_data,
+                                      "/daily_aggmonth_",year,".nc"), 
+                    varname = "mm/month", 
+                    unit = "mm",
+                    overwrite = FALSE)
+    
+  } else {
+    
+    cat("Skipped:", paste0(dir$sample_cleaned_data,"/daily_aggmonth_",year,".nc"), 
+        "(File already exists)\n")
+    }
+}
+
+lapply(years[1], function(x){
+  print(x)
+  aggpenttomonth_func(x)
+})
+
+# show it works
+
+sample3 <- rast(paste0(dir$sample_cleaned_data,"/daily_aggmonth_1990.nc"))
+plot(sample3[[1]], 
+     main = "Estimated Aggregate Daily-Monthly Precipitation Sample (01-2015)")
+lines(zambia)
+lines(zambia_buffer, lty =2)
+
+rm(sample1, sample2, sample3)
+
+```
+
+# Data Extraction
+
+This took longer than I expected, mostly because data cleaning always takes longer than expected... 
+
+For the data extraction, use the files found within the `clean_data` folder, as those are already cleaned and aggregated for use within this section. 
+
+First, I create a generalized code that pulls files in from the years selected, sorts them based on aggregated or raw, and then sorts again based on if the data is daily, daily-pent, pent, pent-month, or month. The second sorting aggregates them into one raster across all years by temporal observation level, so I can work with only 1 raster for daily, pentad, daily-pentad, pentad-month, daily-pentad-month, and monthly observations. 
+
+I then match the CRSs of the shapefiles I will be using to extract zonal means from at the district and province level to the CRS of the rasters. 
+
+From there, I use the `exact_extractr` package to extract the zonal statitics, and do a bunch of data wrangling to pivot the data longer and calibrate the dates such that they are compatible with the `lubridate` package for plotting in ggplot.  
+
+Once the precipitation means data is in a tidy/usable format, I create the SOS variable and the SPI variable. 
+
+The SOS variable is defined as when in a given agricultural year, the rainfall is such that the area experiences: "25mm of rainfall in 10 days followed by 2 ten day periods with cumulative 20mm of rainfall" that define the start of the season. 
+
+The SPI variable is created by taking a z-score. As there is such variable rainfall across space and time, I created a z-score where: 
+
+$$ Z_{ity} =  \frac{X_{ity}- \mu_{im}}{\sigma_{im}}$$
+- $i$ is the province or district 
+- $t$ is the time period (pentad)
+- $y$ is the agricultural year
+- $m$ is the month
+
+So the z-score is a compairson of the mean precipitation of a province/district in pentad t, compared to the mean precipitation across that unit across all years within that given month, divided by the standard deviation of precipitaiton across all years within that given month.  
+
+## Pull in Chirps Data for the relevant years (2015-2020)
+
+```{r data filing, include = TRUE}
+
+# Need 2015 to define 2016 SOS variable because ag seasons run from June[year_pior]-June[year_current]
+
+select_years <- c(2015:2020)
+
+filenames <- c()
+agg_filenames <- c()
+
+for (i in select_years){
+  
+  all_files <- list.files(dir$cleaned_data)
+  agg_files <- list.files(dir$agg_data)
+  
+  filenames <- append(all_files[grepl(as.character(i),all_files)], filenames)
+  agg_filenames <- append(agg_files[grepl(as.character(i),agg_files)], agg_filenames)
+
+  }
+  
+# download SpatRasters into workspace 
+
+spatrast_list <- list()
+agg_spatrast_list <- list()
+
+for (i in filenames) {
+  for (j in agg_filenames) {
+    
+    #non agg data
+    spatrast_list[[i]] <- rast(paste0(dir$cleaned_data,"/",i))
+    #agg data
+    agg_spatrast_list[[j]] <- rast(paste0(dir$agg_data,"/",j))
+  }
+}
+
+# populate multirasters based on daily/pentad
+
+daily_multiraster <- rast(ncols = ncol(spatrast_list[[1]]), 
+                          nrows = nrow(spatrast_list[[1]]), 
+                          nlyrs = 0, 
+                          extent = ext(spatrast_list[[1]]))
+
+pentads_multiraster <- rast(ncols = ncol(spatrast_list[[2]]), 
+                            nrows = nrow(spatrast_list[[2]]), 
+                            nlyrs = 0, 
+                            extent = ext(spatrast_list[[2]]))
+
+# Populate multirasters based on the names of spatrasters
+
+for (i in 1:length(spatrast_list)) {
+  if (grepl("daily", names(spatrast_list)[i])) {
+    daily_multiraster <- c(spatrast_list[[i]], daily_multiraster)
+  } else if (grepl("pentads", names(spatrast_list)[i])) {
+    pentads_multiraster <- c(spatrast_list[[i]], pentads_multiraster)
+  } else {
+    print("Do not include")
+  }
+} 
+
+# appropriately name layers 
+
+days <- rep(1:365, length.out = nlyr(daily_multiraster))
+
+pentads <- rep(1:72, length.out = nlyr(pentads_multiraster))
+
+# Create new layer names vector
+
+layer_names_p <- paste0("pentad_", pentads, "_", rep(select_years, each = 72))
+layer_names_d <- paste0("day_", days, "_", rep(select_years, each = 365))
+
+names(daily_multiraster) <- layer_names_d
+names(pentads_multiraster) <- layer_names_p
+
+head(names(daily_multiraster))
+head(names(pentads_multiraster))
+
+# repeat for aggregated data
+
+daily_agg_pent_multiraster <- rast(ncols = ncol(agg_spatrast_list[[2]]), 
+                                   nrows = nrow(agg_spatrast_list[[2]]), 
+                                   nlyrs = 0, 
+                                   extent = ext(agg_spatrast_list[[2]]))
+
+daily_agg_month_multiraster <- rast(ncols = ncol(spatrast_list[[1]]), 
+                                    nrows = nrow(spatrast_list[[1]]), 
+                                    nlyrs = 0, 
+                                    extent = ext(spatrast_list[[1]]))
+
+pent_agg_month_multiraster <- rast(ncols = ncol(spatrast_list[[3]]), 
+                                   nrows = nrow(spatrast_list[[3]]), 
+                                   nlyrs = 0, 
+                                   extent = ext(spatrast_list[[3]]))
+
+for (i in 1:length(agg_spatrast_list)) {
+  if (grepl("daily_aggpent", names(agg_spatrast_list)[i])) {
+    
+    daily_agg_pent_multiraster <- c(agg_spatrast_list[[i]], 
+                                    daily_agg_pent_multiraster)
+  } 
+  else if (grepl("daily_aggmonth", names(agg_spatrast_list)[i])) {
+    
+    daily_agg_month_multiraster <- c(agg_spatrast_list[[i]],
+                                     daily_agg_month_multiraster)
+  } 
+  else if (grepl("pentad_aggmonth", names(agg_spatrast_list)[i])){
+    pent_agg_month_multiraster <- c(agg_spatrast_list[[i]],
+                                    pent_agg_month_multiraster)
+  }
+} 
+
+# download monthly data
+
+monthly_multiraster <- rast(paste0(dir$cleaned_data,"/chirps-v2.0.monthly.nc")) 
+
+# select months in study range
+
+# define function 
+
+months_of_interest <- function(x){
+  
+  ((length(names(x))-(length(select_years)*length(months)-1)):length(names(x)))
+}
+
+monthly_multiraster <- subset(x = monthly_multiraster,
+                              subset =
+                                months_of_interest(monthly_multiraster))
+                                     
+# rename with years and months
+
+layer_names_m <- paste0(months,"_",rep(select_years, each = length(months)))
+
+names(daily_agg_pent_multiraster) <- layer_names_p
+names(monthly_multiraster) <- layer_names_m
+names(daily_agg_month_multiraster) <- layer_names_m
+names(pent_agg_month_multiraster) <- layer_names_m
+
+rm(spatrast_list, agg_spatrast_list, agg_files, all_files, i,j)
+
+```
+
+### Match projections 
+
+```{r proj, include = TRUE}
+
+if (crs(zambia_adm1)==crs(daily_multiraster)){
+  print("The CRSs match")
+  } else {
+  print("Transform zambia_adm1 into chirps crs")
+} 
+if (crs(zambia_adm2)==crs(daily_multiraster)){
+  print("The CRSs match")
+  } else {
+    print("Transform zambia_adm2 into chirps crs")
+} 
+
+# match projections
+
+zambia_adm1 <- terra::vect(zambia_adm1)
+zambia_adm2 <-terra::vect(zambia_adm2)
+
+zambia_adm1 <- project(zambia_adm1, crs(daily_multiraster))
+zambia_adm2 <- project(zambia_adm2, crs(daily_multiraster))
+
+if (crs(zambia_adm1)==crs(daily_multiraster)){
+  print("The CRSs now match")
+} else {
+  print("Check for an error")
+}
+if (crs(zambia_adm2)==crs(daily_multiraster)){
+  print("The CRSs now match")
+} else {
+  print("Check for an error")
+}
+
+# convert back to sf objects for exactextractr usage
+
+zambia_adm1 <- zambia_adm1 %>% 
+  st_as_sf()
+
+zambia_adm2 <- zambia_adm2 %>% 
+  st_as_sf()
+```
+
+## Extracting precipitation estimates and data wrangling 
+
+### Daily precip estimates by province and district 
+
+```{r daily est, include = TRUE}
+
+# remove extra leap year days (working on better fix)
+
+length(names(daily_multiraster))
+length(unique(names(daily_multiraster)))
+
+raster_names <- names(daily_multiraster)
+duplicated_name <- raster_names[duplicated(raster_names)]
+
+duplicate_index <- which(raster_names == duplicated_name)
+
+daily_multiraster <- subset(daily_multiraster, 1:(nlyr(daily_multiraster)-2))
+
+# check, should = TRUE
+
+length(names(daily_multiraster)) == length(unique(names(daily_multiraster)))
+```
+
+```{r, results='hide', include=TRUE}
+# extract district means
+
+district_mean_daily <- exact_extract(daily_multiraster, zambia_adm2, 
+                                      fun = "mean")
+```
+
+```{r, include = TRUE}
+
+district_mean_daily <- district_mean_daily %>% 
+  mutate(district_name = zambia_adm2$shapeName)
+
+district_mean_daily <- left_join(zambia_adm2, district_mean_daily, 
+                        by = c("shapeName" = "district_name")) 
+
+district_mean_daily <- district_mean_daily %>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8,6)
+```
+
+```{r, results='hide'}
+# extract provincial means 
+
+prov_mean_daily <- exact_extract(daily_multiraster, zambia_adm1, 
+                                      fun = "mean")
+```
+
+```{r, include = TRUE}
+prov_mean_daily <- prov_mean_daily %>% 
+  mutate(province_name = zambia_adm1$shapeName)
+
+prov_mean_daily <- left_join(zambia_adm1, prov_mean_daily, 
+                        by = c("shapeName" = "province_name")) 
+
+prov_mean_daily <- prov_mean_daily %>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8,6)
+
+# convert dates 
+
+district_mean_daily$dates <- gsub("mean\\.", "", district_mean_daily$dates)
+
+district_mean_daily <- district_mean_daily %>% # chat gpt's work
+  mutate(
+    # Extract day and year using regex
+    day_number = as.integer(gsub("day_(\\d+)_(\\d+)", "\\1", dates)),
+    year = as.integer(gsub("day_(\\d+)_(\\d+)", "\\2", dates)),
+    
+    # Combinie day and year information
+    date = make_date(year, 1, 1) + days(day_number - 1)
+  )
+
+prov_mean_daily$dates <- gsub("mean\\.", "", prov_mean_daily$dates)
+
+prov_mean_daily <- prov_mean_daily %>% # chat gpt's work
+  mutate(
+    # Extract day and year using regex
+    day_number = as.integer(gsub("day_(\\d+)_(\\d+)", "\\1", dates)),
+    year = as.integer(gsub("day_(\\d+)_(\\d+)", "\\2", dates)),
+    
+    # Combinie day and year information
+    date = make_date(year, 1, 1) + days(day_number - 1)
+  )
+
+# create ag_year variable to define the growing season for each df
+
+district_mean_daily <- district_mean_daily %>% 
+  mutate(month_numeric = month(date), 
+                 year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+
+prov_mean_daily <- prov_mean_daily %>% 
+  mutate(month_numeric = month(date), 
+                 year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+
+```
+
+### Pentad and aggregated pentad precip estimates by province and district 
+
+#### Daily to pentad values
+```{r pent est1, include=TRUE, results='hide'}
+
+# district ---
+
+district_mean_daily_pent <- exact_extract(daily_agg_pent_multiraster, zambia_adm2, 
+                                      fun = "mean")
+```
+```{r, include=TRUE}
+
+district_mean_daily_pent <- district_mean_daily_pent%>% 
+  mutate(district_name = zambia_adm2$shapeName)
+
+district_mean_daily_pent <- left_join(zambia_adm2, district_mean_daily_pent, 
+                         by = c("shapeName" = "district_name")) %>% st_as_sf()
+
+district_mean_daily_pent <- district_mean_daily_pent %>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+district_mean_daily_pent$dates <- gsub("mean\\.", "",
+                                       district_mean_daily_pent$dates)
+
+pentad_data <- data.frame(
+  regions = rep(unique(district_mean_daily_pent$shapeName), 
+                each = length(unique(district_mean_daily_pent$dates))),
+  pentad = rep(1:length(pentads), 
+               times = length(unique(district_mean_daily_pent$shapeName))),
+  value = district_mean_daily_pent$mean_precip)
+
+# assigning dates for each pentad within each region
+
+pentad_data <- pentad_data %>%
+  group_by(regions) %>%
+  mutate(date = ymd(paste0(select_years[1],"-01-01")) + days((pentad - 1) * 5))  
+
+# reattach to OG data: 
+
+district_mean_daily_pent$date <- pentad_data$date
+
+# create ag_year variable 
+
+district_mean_daily_pent <- district_mean_daily_pent %>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+```
+
+```{r, results='hide'}
+
+# Province ---
+
+prov_mean_daily_pent <- exact_extract(daily_agg_pent_multiraster, zambia_adm1, 
+                                      fun = "mean")
+```
+```{r, include = TRUE}
+
+prov_mean_daily_pent <- prov_mean_daily_pent%>% 
+  mutate(province_name = zambia_adm1$shapeName)
+
+prov_mean_daily_pent <- left_join(zambia_adm1, prov_mean_daily_pent, 
+                        by = c("shapeName" = "province_name")) 
+
+prov_mean_daily_pent <- prov_mean_daily_pent %>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+prov_mean_daily_pent$dates <- gsub("mean\\.", "",
+                                       prov_mean_daily_pent$dates)
+
+pentad_data <- data.frame(
+  regions = rep(unique(prov_mean_daily_pent$shapeName), 
+                each = length(unique(prov_mean_daily_pent$dates))),
+  pentad = rep(1:length(pentads), 
+               times = length(unique(prov_mean_daily_pent$shapeName))),
+  value = prov_mean_daily_pent$mean_precip)
+
+pentad_data <- pentad_data %>%
+  group_by(regions) %>%
+  mutate(date = ymd(paste0(select_years[1],"-01-01")) + days((pentad - 1) * 5))  
+
+# reattach to OG data: 
+
+prov_mean_daily_pent$date <- pentad_data$date
+
+# create ag_year variable
+
+prov_mean_daily_pent <- prov_mean_daily_pent %>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+
+```
+#### Pentad values
+```{r pent est2, results ='hide',include = TRUE}
+
+# Pentad 
+
+# district ---
+
+district_mean_pentad <- exact_extract(pentads_multiraster, zambia_adm2, 
+                                      fun = "mean")
+```
+```{r, include=TRUE}
+
+district_mean_pentad <- district_mean_pentad %>% 
+  mutate(district_name = zambia_adm2$shapeName)
+
+district_mean_pentad <- left_join(zambia_adm2, district_mean_pentad, 
+                         by = c("shapeName" = "district_name")) %>% st_as_sf()
+
+district_mean_pentad <- district_mean_pentad %>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+district_mean_pentad$dates <- gsub("mean\\.", "",
+                                       district_mean_pentad$dates)
+
+pentad_data <- data.frame(
+  regions = rep(unique(district_mean_pentad$shapeName), 
+                each = length(unique(district_mean_pentad$dates))),
+  pentad = rep(1:length(pentads), 
+               times = length(unique(district_mean_pentad$shapeName))),
+  value = district_mean_pentad$mean_precip)
+
+# assigning dates for each pentad within each region
+
+pentad_data <- pentad_data %>%
+  group_by(regions) %>%
+  mutate(date = ymd(paste0(select_years[1],"-01-01")) + days((pentad - 1) * 5))  
+
+# reattach to OG data: 
+
+district_mean_pentad$date <- pentad_data$date
+
+# create ag_year variable 
+
+district_mean_pentad <- district_mean_pentad %>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+```
+
+```{r, results='hide', include=TRUE}
+
+# Province ---
+
+prov_mean_pentad <- exact_extract(pentads_multiraster, zambia_adm1, 
+                                      fun = "mean")
+```
+```{r, include=TRUE}
+
+prov_mean_pentad <- prov_mean_pentad%>% 
+  mutate(province_name = zambia_adm1$shapeName)
+
+prov_mean_pentad <- left_join(zambia_adm1, prov_mean_pentad, 
+                        by = c("shapeName" = "province_name")) 
+
+prov_mean_pentad <- prov_mean_pentad %>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+prov_mean_pentad$dates <- gsub("mean\\.", "",
+                                       prov_mean_pentad$dates)
+
+pentad_data <- data.frame(
+  regions = rep(unique(prov_mean_pentad$shapeName), 
+                each = length(unique(prov_mean_pentad$dates))),
+  pentad = rep(1:length(pentads), 
+               times = length(unique(prov_mean_pentad$shapeName))),
+  value = prov_mean_pentad$mean_precip)
+
+pentad_data <- pentad_data %>%
+  group_by(regions) %>%
+  mutate(date = ymd(paste0(select_years[1],"-01-01")) + days((pentad - 1) * 5))  
+
+# reattach to OG data: 
+
+prov_mean_pentad$date <- pentad_data$date
+
+# create ag_year variable
+
+prov_mean_pentad <- prov_mean_pentad %>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+
+```
+
+### Monthly and aggregated monthly precip estimates by province and district
+
+#### Daily to monthly
+```{r month est 1, include = TRUE, results='hide'}
+
+# district ---
+
+district_mean_daily_month <- exact_extract(daily_agg_month_multiraster,
+                                           zambia_adm2, fun = "mean")
+```
+```{r, include=TRUE}
+
+district_mean_daily_month <- district_mean_daily_month%>% 
+  mutate(district_name = zambia_adm2$shapeName)
+
+district_mean_daily_month <- left_join(zambia_adm2, district_mean_daily_month, 
+                         by = c("shapeName" = "district_name")) %>% st_as_sf()
+
+district_mean_daily_month<- district_mean_daily_month%>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+district_mean_daily_month$dates <- gsub("mean\\.", "",
+                                        district_mean_daily_month$dates)
+
+district_mean_daily_month$month <- sub("_.*", "", 
+                                         district_mean_daily_month$dates)
+district_mean_daily_month$year <- sub(".*_", "",
+                                        district_mean_daily_month$dates)
+
+district_mean_daily_month$date <- ymd(paste(district_mean_daily_month$year, 
+                                            
+                                    match(tolower(district_mean_daily_month$month), 
+                                                      tolower(month.name)),
+                                        "01", sep = "-"))
+
+# create ag_year variable 
+
+district_mean_daily_month<- district_mean_daily_month%>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+```
+
+```{r, results='hide'}
+# Province ---
+
+prov_mean_daily_month <- exact_extract(daily_agg_month_multiraster, zambia_adm1, 
+                                      fun = "mean")
+```
+```{r, include=TRUE}
+prov_mean_daily_month <- prov_mean_daily_month%>% 
+  mutate(province_name = zambia_adm1$shapeName)
+
+prov_mean_daily_month <- left_join(zambia_adm1, prov_mean_daily_month, 
+                        by = c("shapeName" = "province_name")) 
+
+prov_mean_daily_month <- prov_mean_daily_month %>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+prov_mean_daily_month$dates <- gsub("mean\\.", "",
+                                       prov_mean_daily_month$dates)
+
+prov_mean_daily_month$month <- sub("_.*", "", 
+                                         prov_mean_daily_month$dates)
+prov_mean_daily_month$year <- sub(".*_", "",
+                                        prov_mean_daily_month$dates)
+
+prov_mean_daily_month$date <- ymd(paste(prov_mean_daily_month$year, 
+                                            
+                                    match(tolower(prov_mean_daily_month$month), 
+                                                      tolower(month.name)),
+                                        "01", sep = "-"))
+# create ag_year variable
+
+prov_mean_daily_month <- prov_mean_daily_month %>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+
+```
+
+#### Pentad to monthly
+```{r month est 2, include = TRUE, results='hide'}
+
+# district ---
+
+district_mean_pent_month <- exact_extract(pent_agg_month_multiraster,
+                                           zambia_adm2, fun = "mean")
+```
+```{r, include=TRUE}
+district_mean_pent_month <- district_mean_pent_month%>% 
+  mutate(district_name = zambia_adm2$shapeName)
+
+district_mean_pent_month <- left_join(zambia_adm2, district_mean_pent_month, 
+                         by = c("shapeName" = "district_name")) %>% st_as_sf()
+
+district_mean_pent_month<- district_mean_pent_month%>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+district_mean_pent_month$dates <- gsub("mean\\.", "",
+                                        district_mean_pent_month$dates)
+
+district_mean_pent_month$month <- sub("_.*", "", 
+                                         district_mean_pent_month$dates)
+district_mean_pent_month$year <- sub(".*_", "",
+                                        district_mean_pent_month$dates)
+
+district_mean_pent_month$date <- ymd(paste(district_mean_pent_month$year, 
+                                            
+                                    match(tolower(district_mean_pent_month$month), 
+                                                      tolower(month.name)),
+                                        "01", sep = "-"))
+
+# create ag_year variable 
+
+district_mean_pent_month<- district_mean_pent_month%>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+
+```
+
+```{r, include=TRUE, results='hide'}
+# Province ---
+
+prov_mean_pent_month <- exact_extract(pent_agg_month_multiraster, zambia_adm1, 
+                                      fun = "mean")
+```
+```{r, include=TRUE}
+
+prov_mean_pent_month <- prov_mean_pent_month%>% 
+  mutate(province_name = zambia_adm1$shapeName)
+
+prov_mean_pent_month <- left_join(zambia_adm1, prov_mean_pent_month, 
+                        by = c("shapeName" = "province_name")) 
+
+prov_mean_pent_month <- prov_mean_pent_month %>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+prov_mean_pent_month$dates <- gsub("mean\\.", "",
+                                       prov_mean_pent_month$dates)
+
+prov_mean_pent_month$month <- sub("_.*", "", 
+                                         prov_mean_pent_month$dates)
+prov_mean_pent_month$year <- sub(".*_", "",
+                                        prov_mean_pent_month$dates)
+
+prov_mean_pent_month$date <- ymd(paste(prov_mean_pent_month$year, 
+                                            
+                                    match(tolower(prov_mean_pent_month$month), 
+                                                      tolower(month.name)),
+                                        "01", sep = "-"))
+# create ag_year variable
+
+prov_mean_pent_month <- prov_mean_pent_month %>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+
+```
+
+#### Monthly
+```{r month est 3, include = TRUE, results='hide'}
+
+# district ---
+
+district_mean_month <- exact_extract(monthly_multiraster,
+                                           zambia_adm2, fun = "mean")
+```
+```{r, include=TRUE}
+district_mean_month <- district_mean_month%>% 
+  mutate(district_name = zambia_adm2$shapeName)
+
+district_mean_month <- left_join(zambia_adm2, district_mean_month, 
+                         by = c("shapeName" = "district_name")) %>% st_as_sf()
+
+district_mean_month<- district_mean_month%>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+district_mean_month$dates <- gsub("mean\\.", "",
+                                        district_mean_month$dates)
+
+district_mean_month$month <- sub("_.*", "", 
+                                         district_mean_month$dates)
+district_mean_month$year <- sub(".*_", "",
+                                        district_mean_month$dates)
+
+district_mean_month$date <- ymd(paste(district_mean_month$year, 
+                                            
+                                    match(tolower(district_mean_month$month), 
+                                                      tolower(month.name)),
+                                        "01", sep = "-"))
+
+# create ag_year variable 
+
+district_mean_month<- district_mean_month%>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+
+```
+
+```{r, include=TRUE, results='hide'}
+# Province ---
+
+prov_mean_month <- exact_extract(monthly_multiraster, zambia_adm1, 
+                                      fun = "mean")
+
+prov_mean_month <- prov_mean_month%>% 
+  mutate(province_name = zambia_adm1$shapeName)
+
+prov_mean_month <- left_join(zambia_adm1, prov_mean_month, 
+                        by = c("shapeName" = "province_name")) 
+
+prov_mean_month <- prov_mean_month %>% 
+  pivot_longer(cols = contains("mean."), names_to = "dates", 
+               values_to = "mean_precip") %>% 
+  select(1:5, 7,8, 6)
+
+# dates
+
+prov_mean_month$dates <- gsub("mean\\.", "", prov_mean_month$dates)                   
+prov_mean_month$month <- sub("_.*", "", prov_mean_month$dates)
+
+prov_mean_month$year <- sub(".*_", "", prov_mean_month$dates)
+
+prov_mean_month$date <- ymd(paste(prov_mean_month$year, 
+                                  match(tolower(prov_mean_month$month), 
+                                        tolower(month.name)),
+                                        "01", sep = "-"))
+# create ag_year variable
+
+prov_mean_month <- prov_mean_month %>% 
+  mutate(month_numeric = month(date), 
+         year = year(date)) %>% 
+  mutate(ag_year= ifelse(month_numeric >=6 & month_numeric <=12, year+1, year)) %>% 
+  filter(!(ag_year == 2015) & !(ag_year == 2021))
+
+```
+
+## Create Start of Season Variable (SOS) 
+
+### District level
+```{r SOS var 1, include=TRUE}
+
+# Want district level SOS for the daily-pentad and pentad data 
+
+# Using SOS definition: Code snippet from Patrese Anderson (script 4: Create data frame of weather variables)
+## 25mm of rainfall in 10 days followed by 
+## 2 ten day periods with cumulative 20mm of rainfall
+
+first_equal_to <- function(x, value){
+  (x == value) & (cumsum(x == value) == 1)}
+
+# pentad SOS
+
+district_mean_pentad <- district_mean_pentad %>%
+  group_by(shapeName) %>%
+  arrange(shapeName, date, .by_group=TRUE) %>% 
+  mutate(lead1=lead(mean_precip,1), # want next 5 pentad's info to calculate sOS
+         lead2=lead(mean_precip,2), 
+         lead3=lead(mean_precip,3), 
+         lead4=lead(mean_precip,4), 
+         lead5=lead(mean_precip,5)) %>% 
+  mutate(next_more_25=ifelse((mean_precip+lead1)>=25,1,0)) %>% # 1st condition
+  mutate(next_two_more_20=ifelse((lead2+lead3+lead4+lead5)>=20,1,0)) %>% # 2nd condition
+  #identify SOS potential
+  mutate(SOS_potential=ifelse(next_more_25==1 & next_two_more_20==1,1,0)) %>% 
+  group_by(shapeName, ag_year) %>% 
+  arrange(shapeName, date, .by_group=TRUE) %>% 
+  mutate(SOS.b = first_equal_to(SOS_potential, 1)) %>% # ID SOS start per ag year per district
+  mutate(SOS.b=SOS.b*1)
+
+# daily-pentad SOS 
+
+district_mean_daily_pent <- district_mean_daily_pent %>%
+  group_by(shapeName) %>%
+  arrange(shapeName, date, .by_group=TRUE) %>% 
+  mutate(lead1=lead(mean_precip,1), # want next 5 pentad's info to calculate sOS
+         lead2=lead(mean_precip,2), 
+         lead3=lead(mean_precip,3), 
+         lead4=lead(mean_precip,4), 
+         lead5=lead(mean_precip,5)) %>% 
+  mutate(next_more_25=ifelse((mean_precip+lead1)>=25,1,0)) %>% # 1st condition
+  mutate(next_two_more_20=ifelse((lead2+lead3+lead4+lead5)>=20,1,0)) %>% # 2nd condition 
+  #identify SOS potential
+  mutate(SOS_potential=ifelse(next_more_25==1 & next_two_more_20==1,1,0)) %>% 
+  group_by(shapeName, ag_year) %>% 
+  arrange(shapeName, date, .by_group=TRUE) %>% 
+  mutate(SOS.b = first_equal_to(SOS_potential, 1)) %>%  # ID SOS start per ag year per district
+  mutate(SOS.b=SOS.b*1)
+
+```
+### Province level
+```{r SOS var 2, include = TRUE}
+
+# want province level SOS for the daily-pentad and pentad data 
+
+# pentad SOS
+
+prov_mean_pentad <- prov_mean_pentad %>%
+  group_by(shapeName) %>%
+  arrange(shapeName, date, .by_group=TRUE) %>% 
+  mutate(lead1=lead(mean_precip,1), # want next 5 pentad's info to calculate sOS
+         lead2=lead(mean_precip,2), 
+         lead3=lead(mean_precip,3), 
+         lead4=lead(mean_precip,4), 
+         lead5=lead(mean_precip,5)) %>% 
+  mutate(next_more_25=ifelse((mean_precip+lead1)>=25,1,0)) %>% # 1st condition
+  mutate(next_two_more_20=ifelse((lead2+lead3+lead4+lead5)>=20,1,0)) %>% # 2nd condition
+  #identify SOS potential
+  mutate(SOS_potential=ifelse(next_more_25==1 & next_two_more_20==1,1,0)) %>% 
+  group_by(shapeName, ag_year) %>% 
+  arrange(shapeName, date, .by_group=TRUE) %>% 
+  mutate(SOS.b = first_equal_to(SOS_potential, 1)) %>% # ID SOS start per ag year per district
+  mutate(SOS.b=SOS.b*1)
+
+# daily-pentad SOS 
+
+prov_mean_daily_pent <- prov_mean_daily_pent %>%
+  group_by(shapeName) %>%
+  arrange(shapeName, date, .by_group=TRUE) %>% 
+  mutate(lead1=lead(mean_precip,1), # want next 5 pentad's info to calculate sOS
+         lead2=lead(mean_precip,2), 
+         lead3=lead(mean_precip,3), 
+         lead4=lead(mean_precip,4), 
+         lead5=lead(mean_precip,5)) %>% 
+  mutate(next_more_25=ifelse((mean_precip+lead1)>=25,1,0)) %>% # 1st condition
+  mutate(next_two_more_20=ifelse((lead2+lead3+lead4+lead5)>=20,1,0)) %>% # 2nd condition 
+  #identify SOS potential
+  mutate(SOS_potential=ifelse(next_more_25==1 & next_two_more_20==1,1,0)) %>% 
+  group_by(shapeName, ag_year) %>% 
+  arrange(shapeName, date, .by_group=TRUE) %>% 
+  mutate(SOS.b = first_equal_to(SOS_potential, 1)) %>%  # ID SOS start per ag year per district
+  mutate(SOS.b=SOS.b*1)
+
+```
+
+## Create Seasonal Precipitation Index (SPI) variable 
+
+```{r sp1, include = TRUE}
+
+# an spi is essentially a z-score
+
+# calculate average rain and sd by ag year, month and province 
+
+temp <- prov_mean_daily_pent %>% 
+  group_by(shapeName, ag_year, month_numeric) %>% 
+  summarise(sd_precip = sd(mean_precip, na.rm = TRUE),
+            mean_precip= mean(mean_precip, na.rm = TRUE)) %>% 
+  group_by(shapeName, month_numeric) %>% 
+  summarise(sd_precip = sd(mean_precip, na.rm = TRUE),
+    monthly_mean_precip_5yr = mean(mean_precip)) %>% 
+  st_drop_geometry()
+
+# join with main dataframe 
+
+spi_dataframe <- left_join(prov_mean_daily_pent, temp)
+
+spi_dataframe <- spi_dataframe %>% 
+  ungroup() %>% 
+  mutate(spi = ifelse(sd_precip == 0, 0, # creates z-score
+                      (mean_precip-monthly_mean_precip_5yr) / sd_precip))
+
+```
+
+
+# Visualizations
+
+In each sub-section, I will describe the figure and provide some basic analysis. 
+
+## Zambia Provinces and Districts
+
+```{r zambia, echo=FALSE}
+
+# colors 
+
+colors <- brewer.pal(10, "Paired")
+#plot(1:10, pch = 16, col = colors, cex = 5)
+
+ggplot() +
+  geom_sf(data=zambia_adm1, aes(fill = shapeName))+
+  geom_sf(data = zambia_adm2, fill = NA, col = "#808080FF")+
+  geom_sf(data=zambia_adm1, fill = NA, col = "black")+
+  labs(title = "Zambia Provinces and Districts",
+       fill = c("Province Name")) +
+  scale_color_manual(values = colors, aesthetics = "fill")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  annotation_scale() +
+  annotation_north_arrow(location = "br", 
+                         style = north_arrow_fancy_orienteering)
+
+```
+
+Basic map of Zambia and it's provinces and districts. The provinces are displayed in color, and the districts (the next administrative unit down) are displayed as the gray-lined polygons. 
+
+## Raw Precipitation Estimates
+
+```{r raw est viz, echo=FALSE}
+
+# raw precip estimates by province 
+
+ggplot() +
+  geom_line(data = prov_mean_daily, 
+            aes(x = date, y = mean_precip, col = shapeName))+
+  geom_line(data = prov_mean_pentad, aes(x = date, y = mean_precip),  alpha = 0.7)+ 
+  geom_line(data = prov_mean_month, aes(x = date, y = mean_precip), 
+            alpha = 0.7, lty = 2) +
+  scale_color_manual(values = colors, aesthetics = "col") +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y")+
+  facet_wrap(~ shapeName)+
+  labs(title = "Mean daily (color), pentadal (solid dark), and monthly (dashed dark) \nprecipitation by province, 2016-2020", 
+       col = "Province", 
+       x = "", 
+       y = "Mean estimated precipitation (mm)")+
+  theme_bw()
+
+```
+
+The goal of this plot was to compare the raw precipitation estimates by province over time. Importantly, my observations line up over time and seem to make sense in magnitude (i.e. the daily rainfall is less than the pentadal is less than the monthly). We can see that across provinces, it appears that 2017-2018 seem to have received more precipitation, and in 2019 some provinces experienced dry years (notably Southern, Western and Lusaka). 
+
+## Comparing mean differences in CHIRPS vs aggregated CHIRPS
+```{r diff, echo=FALSE}
+
+# Daily aggregated to pentad vs pentad 
+
+ggplot() +
+  geom_line(data = prov_mean_pentad, aes(x = date, y = mean_precip), 
+             col = "purple") +
+  geom_line(data = prov_mean_daily_pent, 
+             aes(x = date, y = mean_precip), col = "orange", alpha = 0.75)+
+  facet_wrap(~ shapeName) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y")+
+  labs(title = "Aggregated Pentadal data (Orange) vs Standard CHIRPs Pentadal Data (Purple)", 
+       x = "", 
+       y = "Mean estimated precipitation (mm/pentad)")+
+  theme_bw()
+
+
+# daily aggregated to monthly vs monthly 
+
+ggplot() +
+  geom_line(data = prov_mean_month, aes(x = date, y = mean_precip), 
+            col = "purple") +
+  geom_line(data = prov_mean_daily_month, aes(x = date, y = mean_precip), 
+            col = "orange", alpha = 0.75)+
+  facet_wrap(~ shapeName) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y")+
+  labs(title = "Aggregated Daily-Month data (Orange) vs Standard CHIRPs Monthly Data (Purple)", 
+       x = "", 
+       y = "Mean estimated precipitation (mm/month)")+
+  theme_bw()
+
+# pentad aggregated to monthly vs monthly
+
+ggplot() +
+  geom_line(data =prov_mean_month, aes(x = date, y = mean_precip), 
+            col = "purple") +
+  geom_line(data = prov_mean_pent_month, aes(x = date, y = mean_precip), 
+            col = "orange", alpha = 0.75) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y")+
+  labs(title = "Aggregated Pentad-Month data (Orange) vs Standard CHIRPs Monthly Data (Purple)", 
+       x = "", 
+       y = "Mean estimated precipitation (mm/month)")+
+  facet_wrap(~ shapeName)+
+  theme_bw()
+
+```
+
+Each of these figures above compares the aggregated precipitation estimates to the raw precipitation estimates. The first panel compares daily-pentad aggregated data to pentad data, the second daily-pentad-month to monthly, and the third pentad-month to monthly. We can see that the daily aggregated data seems to decently predict the pentad aggregated: the dry seasons line up with dry seasons, etc. Same with the daily-pentad aggregated monthly; that overall the daily data does an okay job predicting precipitation trends. Examining the aggregated pentad data with the monthly data, one can see it's essentially a perfect match. This confirms that the authors do indeed adjust the pentad sums to perfectly sum to the monthly estimated rainfall. 
+
+### Mean differences
+```{r diff1, include=TRUE}
+
+prov_mean_daily_month <- prov_mean_daily_month %>% 
+  ungroup() %>% 
+  mutate(mean_precip_difference = prov_mean_month$mean_precip - prov_mean_daily_month$mean_precip)
+
+prov_mean_daily_pent <- prov_mean_daily_pent %>% 
+  ungroup() %>% 
+  mutate(mean_precip_difference = prov_mean_pentad$mean_precip - prov_mean_daily_pent$mean_precip)
+
+prov_mean_pent_month <- prov_mean_pent_month %>% 
+  ungroup() %>%
+  mutate(mean_precip_difference = prov_mean_month$mean_precip - prov_mean_pent_month$mean_precip)
+
+```
+
+```{r diff2, echo=FALSE}
+
+# Daily aggregated to pentad
+
+ggplot() +
+  geom_line(data = prov_mean_daily_pent, 
+            aes(x = date, y = mean_precip_difference), col = "red", alpha = 0.9) +
+  geom_hline(yintercept = 0, lty = 2, lwd = 0.7)+
+  facet_wrap(~ shapeName)+
+  labs(title = "Difference in means between aggregated daily-pentad data \n& pentadal CHIRPs data", 
+       subtitle = "Pentadal CHIRPs normalized to 0", 
+       x = "", 
+       y = "Mean precipitation difference (mm/pentad)")+
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y")+
+  theme_bw()
+
+# daily aggregated to monthly
+
+ggplot() +
+  geom_line(data = prov_mean_daily_month, 
+            aes(x=date, y = mean_precip_difference), col = "red", alpha = 0.9)+
+  geom_hline(yintercept = 0, lty = 2, lwd = 0.7)+
+  facet_wrap(~ shapeName)+
+  labs(title = "Difference in means between aggregated daily-monthly data \n& monthly CHIRPs data", 
+       subtitle = "Monthly CHIRPs normalized to 0", 
+       x = "", 
+       y = "Mean precipitation difference (mm/month)")+
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y")+
+  theme_bw()
+
+# pentad aggregated to monthly
+
+ggplot() +
+  geom_line(data = prov_mean_pent_month, 
+            aes(x = date, y = mean_precip_difference), col = "red", alpha = 0.9) +
+  geom_hline(yintercept = 0, lty = 2, lwd = 0.7)+
+  facet_wrap(~ shapeName)+
+  labs(title = "Difference in means between aggregated pentad-month data \n& monthly CHIRPs data", 
+       subtitle = "Monthly CHIRPs normalized to 0",
+       x = "", 
+       y = "Mean Precipitation Difference (mm/month)")+
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y")+
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw()
+
+```
+
+Further, when we take the difference in means between the raw and the aggregated data, one can see significant differences in accuracy arise. While the daily does match generally wet/dry, one can see there are large variations in estimated precipitation during the actual rainy season, where the daily aggregated precipitation is either greater or less than the raw pentadal precipitation by 50 mm/pentad, which is no small amount. We can further see this exacerbated in the daily aggregated to monthly precipitation compared to the raw precipitation. Again, however, there is almost no deviation from the aggregated pentadal to the monthly precipitation estimates. 
+
+## Scatter plots to compare raw versus aggregated mean precipitation estimates
+
+In addition to understanding the magnitude of differences, I wanted to understand the trends estimation - is the daily overestimating or underestimating precipitation? To do this, I ran a scatter plot of the mean values to understand their relation, and plotted the line of best fit as well as a 1:1 ratio line. 
+
+```{r scatter1, echo=FALSE}
+
+# create scatter plot of difference in aggregated daily-pentad data vs normal pentadal data 
+
+ggplot(prov_mean_pentad) +
+  geom_point(aes(x = mean_precip,
+                 y = prov_mean_daily_pent$mean_precip, col = shapeName)) +
+  geom_smooth(method = "lm", aes(x = mean_precip, y = prov_mean_daily_pent$mean_precip),
+              col = "black", lty = 2, lwd = 0.75) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed")+
+  scale_color_manual(values = colors, aesthetics = "col") +
+  facet_wrap(~ shapeName, scales = "free_x") +
+  theme(strip.text.x = element_text(angle = 45, hjust = 1))+
+  labs(title = "Scatterplot of mean aggregated daily-pentad precipitation \nregressed on mean pentadal precipitation", 
+       x = "Mean precipitation (mm/pentad)", 
+       y = "Mean aggregated precipitation (mm/mentad)", 
+       col = "Province")+
+  theme_bw()
+
+```
+
+We can see that there is a large spread in points across the graph, and that the line of best fit falls below the 1:1 ratio for all provinces. My interpretation is that the aggregated data (on the y axis) slightly under-predicts mean estimated rainfall compared to the pentad estimates. This demonstrates the daily perhaps isn't as accurate in estimating the true amount of precipitation. 
+
+
+```{r scatter2, echo=FALSE}
+
+# scatter plot of difference in monthly aggregated daily-pentad-monthly data vs normal monthly data 
+
+ggplot(prov_mean_month)+
+  geom_point(aes(x = mean_precip, y = prov_mean_daily_month$mean_precip, 
+                 col = shapeName)) +
+  geom_smooth(method = "lm", col = "black", lty = 2, lwd = 0.75,
+              aes(x = mean_precip, y = prov_mean_daily_month$mean_precip)) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed")+
+  facet_wrap(~ shapeName, scales = "free_x") +
+  scale_color_manual(values = colors, aesthetics = "col") +
+  labs(title = "Scatterplot of mean aggregate daily-month precipitation regressed \non mean monthly precipitation", 
+       col = "Province", 
+       x = "Mean precipitation (mm/month)", 
+       y = "Mean aggregated precipitation (mm/month)")+
+  theme_bw()
+
+```
+
+Here, I did the same but used the dail-pentad-monthly data regressed against the raw monthly data. The fit is much closer actually, but still the line of best fit falls towards the raw data across all provinces, again showing that the daily data is perhaps underestimated slightly.Interestingly, the fit is much closer, which suggests there are benefits in improving the model's performance through temporal aggregation.  
+
+```{r scatter3, echo=FALSE}
+
+# scatter plot of difference in monthly aggregated pentad-monthly data vs normal monthly data 
+
+ggplot(prov_mean_month)+
+  geom_point(aes(x = mean_precip, y = prov_mean_pent_month$mean_precip, 
+                 col = shapeName)) +
+  geom_smooth(method = "lm", col = "black", lty = 2, lwd = 0.75,
+              aes(x = mean_precip, y = prov_mean_pent_month$mean_precip)) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed")+
+  facet_wrap(~ shapeName, scales = "free_x") +
+  scale_color_manual(values = colors, aesthetics = "col") +
+  labs(title = "Scatterplot of mean aggregate pentad-month precipitation regressed \non mean monthly precipitation", 
+       col = "Province", 
+       x = "Mean precipitation (mm/month)", 
+       y = "Mean aggregated precipitation (mm/month)")+
+  theme_bw()
+
+```
+
+This figure confirms the same trend we've been seeing: that pentad data when aggregated is essentially a perfect fit for the monthly data. 
+
+## District-Level Start of Season (SOS)
+
+I generated the SOS for both district and provincial levels using the raw pentad data and the daily-pentad aggregated data. The goal was to see if there are differences in what date is identified as the start of the rainy season between the two data types. 
+
+```{r SOS1 dis, echo=FALSE}
+
+SOS_district_pent <- district_mean_pentad %>% 
+  group_by(shapeName) %>% 
+  mutate(month_day = format(date, "%m-%d")) %>% 
+  filter(SOS.b ==1)
+
+ggplot(SOS_district_pent)+ 
+  geom_sf(aes(fill = month_day), col = "black")+
+  facet_wrap(~ ag_year)+
+  scale_fill_viridis_d(direction= -1)+
+  labs(title = "Pentadal Start of Season (SOS) based on estimated mean rainfall (mm/pentad)",
+      fill = c("SOS Date (MM-DD)"))+
+  annotation_scale() +
+  annotation_north_arrow(location = "br", 
+                         height = unit(1, "cm"), 
+                         style = north_arrow_fancy_orienteering)+
+  theme_bw()
+
+SOS_district_daily_pent <- district_mean_daily_pent %>% 
+  group_by(shapeName) %>% 
+  mutate(month_day = format(date, "%m-%d")) %>% 
+  filter(SOS.b ==1)
+
+ggplot(SOS_district_daily_pent )+ 
+  geom_sf(aes(fill = month_day), col = "black")+
+  facet_wrap(~ ag_year)+
+  scale_fill_viridis_d(direction= -1)+
+  labs(title = "Daily-Pentad Start of Season (SOS) based on estimated mean \nrainfall (mm/pentad)",
+       fill = c("SOS Date (MM-DD)"))+
+  annotation_scale() +
+  annotation_north_arrow(location = "br", 
+                         height = unit(1, "cm"),
+                         style = north_arrow_fancy_orienteering)+
+  theme_bw()
+
+```
+
+These figures allow us to not only see general precipitation patterns across each agricultural year, but also the heterogeneity of rainfall start dates across the country, showing how precipitation is not just a uniform trend across geographies. 
+It's shown here for both figures that the 2016 agricultural year had a very late SOS, which confirms anecdotal evidence I've heard that the years 2016-2017 were low-rain/drought years.
+
+Further, there are notable differences in SOS dectection between the aggregate and the raw pentadal data. The overall trends in SOS remain the same, where the rains start later in the south (drier climate), but the dates of the SOS are different by district for the daily-pentad data. 
+
+## Province-Level Start of Season (SOS)
+
+```{r SOS1 prov, echo=FALSE}
+
+SOS_prov_pent <- prov_mean_pentad %>% 
+  group_by(shapeName) %>% 
+  mutate(month_day = format(date, "%m-%d")) %>% 
+  filter(SOS.b ==1 )
+
+ggplot(SOS_prov_pent)+ 
+  geom_sf(aes(fill = month_day), col = "black")+
+  facet_wrap(~ ag_year)+
+  scale_fill_viridis_d(direction= -1)+
+  labs(title = "Pentadal Start of Season (SOS) based on estimated mean rainfall (mm/pentad)",
+      fill = c("SOS Date (MM-DD)"))+
+  annotation_scale() +
+  annotation_north_arrow(location = "br", 
+                         height = unit(1, "cm"),
+                         style = north_arrow_fancy_orienteering)+
+  theme_bw()
+
+SOS_prov_daily_pent <- prov_mean_daily_pent %>% 
+  group_by(shapeName) %>% 
+  mutate(month_day = format(date, "%m-%d")) %>% 
+  filter(SOS.b ==1)
+
+ggplot(SOS_prov_daily_pent )+ 
+  geom_sf(aes(fill = month_day), col = "black")+
+  facet_wrap(~ ag_year)+
+  scale_fill_viridis_d(direction= -1)+
+  labs(title = "Daily-Pentad Start of Season (SOS) based on estimated mean rainfall (mm/pentad)",
+       fill = c("SOS Date (MM-DD)"))+
+  annotation_scale() +
+  annotation_north_arrow(location = "br", 
+                         height = unit(1, "cm"),
+                         style = north_arrow_fancy_orienteering)+
+  theme_bw()
+
+```
+
+The province level SOS dates demonstrate the same story: that overall the daily-pentad can predict the same overall trends, but there are marked differences in the SOS date by province, showing that we wouldn't get as accurate precipitation and SOS estimates if we were to go with the daily-pentad data.  
+
+## Seasonal Precipitation Index by Province 
+
+```{r spi1, echo=FALSE}
+
+spi_dataframe <- spi_dataframe %>% 
+  mutate(rainy = ifelse(spi > 2.96, 1, 0), 
+         drought = ifelse(spi < -2.96, 1,0))
+
+ggplot(spi_dataframe) +
+  geom_vline(data = subset(spi_dataframe, rainy ==1), 
+             aes(xintercept = date, alpha="darkblue" ), col = "darkblue", alpha = 0.6)+
+  geom_vline(data = subset(spi_dataframe, drought ==1), 
+             aes(xintercept = date, alpha = "brown"), col = "brown", alpha = 0.6)+
+  geom_point(aes(x = date, y = spi, col = shapeName))+
+  facet_wrap(~ shapeName)+
+  geom_hline(yintercept = 0, col = "black")+
+  geom_hline(yintercept = -2.96, col = "red", lty = 2)+
+  geom_hline(yintercept = 2.96, col = "red", lty = 2)+
+  scale_color_manual(values = colors, aesthetics = "col") +
+  scale_x_date(date_breaks = "2 years", labels = date_format("%Y"),
+               breaks = seq(as.Date("2016-01-01"), as.Date("2020-01-01"), by = "2 years"))+
+  labs(title = "Seasonal Precipitation Index (SPI) by province over time (pentads)",
+       subtitle = "Extreme Rainfall Event (Drought/Flood) indicated by vertical line \nWhere SPI > 2.96 = rainy (blue), SPI < -2.96 = drought (brown)",
+      x = "", 
+       y = "Seasonal Precipitation Index (SPI) z-score", 
+       col = "Province")+
+  theme_bw()
+
+```
+
+The goal of this graph is to demonstrate the general "extremeness" of the rainfall experienced with the pentad by province. The blue vertical line indicates that the pentad was "rainier" than usual, and the brown vertical line demonstrates there was less rain than usual. This allows us to see there in time droughts or very wet events occur within the province. 
+
+# References
+
+Funk, C.C., Peterson, P.J., Landsfeld, M.F., Pedreros, D.H., Verdin, J.P., Rowland, J.D., Romero, B.E., Husak, G.J., Michaelsen, J.C., and Verdin, A.P. 2014. A quasi-global precipitation time series for drought monitoring: U.S. Geological Survey Data Series 832, 4 p., https://dx.doi.org/10.3133/ds832.
+
+Waongo M., Laux, P., and Kunstmann, H. 2015. Adaptation to climate change: Tje impacts of optimized planting dates on attainable maize yeilds under rainfed conditions in Burkina Faso.*Agricultural and Forest Meteorology, 205*: 22-39. doi:10.1016/j.agrformet.2015.02.006
+
+Funk, C., Peterson, P., Landsfeld, M. et al. The climate hazards infrared precipitation with stations—a new environmental record for monitoring extremes. *Sci Data 2,* 150066 (2015). https://doi.org/10.1038/sdata.2015.66
