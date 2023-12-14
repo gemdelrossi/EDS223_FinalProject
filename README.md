@@ -5,7 +5,7 @@ This is the README file for the EDS 223 Final Project.
 The data structure for your folders should go as follows:  
   
 | EDS223_FinalProject  
-   | data  
+    | data  
     | clean_data  
     | raw_data  
     | sample_clean_data  
