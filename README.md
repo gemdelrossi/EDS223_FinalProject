@@ -4,14 +4,16 @@ This is the README file for the EDS 223 Final Project.
   
 The data structure for your folders should go as follows:  
   
-| EDS223_FinalProject  
-| __  data 
-| __  clean_data
-| __  raw_data    
-| __  sample_clean_data    
-| __  zambia_geoboundaroes   
-    |   adm1  
-    |   adm2  
+EDS223-final_project
+│   README.md
+│   Rmd/Proj files   
+└───data
+    │   clean_data
+    │   raw_data
+    │   sample_clean_data  
+    └───zambia_geoboundaries
+    |   │   adm1
+    |   │   adm2
 
 The code chunk provided within the RMD file should create this structure for you, but check to make sure all your directories are set up properly.  
   
